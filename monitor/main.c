@@ -197,6 +197,7 @@ main(int argc, char* argv[]) {
     int dataCap = MEGA;
     int dataIndex = 0;
     int visibleIndex = 0;
+    int targetVisibleIndex = 0;
     
     /* read data file */
     char* filename = "../data.txt";
@@ -264,12 +265,15 @@ main(int argc, char* argv[]) {
 	    } break;
 	    case SDL_MOUSEWHEEL: {
 		int step = dataIndex / 50;
-		visibleIndex -= event.wheel.y * step ;
-		visibleIndex = max(0, min((dataIndex - 100), visibleIndex));
+		targetVisibleIndex -= event.wheel.y * step ;
+		targetVisibleIndex = max(0, min((dataIndex - 100), targetVisibleIndex));
 	    } break;
 	    }
 	}
-	
+
+	float catchUpSpeed = (float)(targetVisibleIndex - visibleIndex) / 50.0f;
+	visibleIndex += catchUpSpeed;
+	visibleIndex = max(0, min(dataIndex, visibleIndex));
 	/* check if file updated */
 	struct stat new_info;
 	if (stat(filename, &new_info) != 0) {
@@ -418,11 +422,21 @@ main(int argc, char* argv[]) {
 	static float shift = 0;
 	shift += delta * 3;
 	SDL_SetRenderDrawColorRGB(renderer, tempDataColor);
+	bool drawRect = dataIndex - visibleIndex < 1000;
 	for (int i = visibleIndex; i < dataIndex; ++i) {
 	    Data item = data[i];
 	    int x = ((int)LinearMap(i, visibleIndex, dataIndex, tempGraphX, tempGraphX2));
 	    int y = ((int)LinearMap(item.temperature, tempDisplayRangeLow, tempDisplayRangeHigh, graphY2, graphY));
-	    SDL_RenderDrawPoint(renderer, x, y);
+	    if (drawRect) {
+		SDL_Rect rect;
+		rect.x = x;
+		rect.y = y;
+		rect.w = 2;
+		rect.h = 2;
+		SDL_RenderDrawRect(renderer, &rect);
+	    } else {
+		SDL_RenderDrawPoint(renderer, x, y);
+	    }
 	    if ((item.temperature == tempMin && !drewMin) || (item.temperature == tempMax && !drewMax)) {
 		/* horizontal dotted line */
 		char s[6];
@@ -444,6 +458,16 @@ main(int argc, char* argv[]) {
 	    Data item = data[i];
 	    int x = ((int)LinearMap(i, visibleIndex, dataIndex, pressGraphX, pressGraphX2));
 	    int y = ((int)LinearMap(item.pressure, pressDisplayRangeLow, pressDisplayRangeHigh, graphY2, graphY));
+	    if (drawRect) {
+		SDL_Rect rect;
+		rect.x = x;
+		rect.y = y;
+		rect.w = 2;
+		rect.h = 2;
+		SDL_RenderDrawRect(renderer, &rect);
+	    } else {
+		SDL_RenderDrawPoint(renderer, x, y);
+	    }
 	    SDL_RenderDrawPoint(renderer, x, y);
 	    if ((item.pressure == pressMin && !drewMin) || (item.pressure == pressMax && !drewMax)) {
 		/* horizontal dotted line */
