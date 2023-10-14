@@ -3,23 +3,22 @@
 #include <SDL2/SDL_image.h>
 #include <stdio.h>
 #include <time.h>
+#include <math.h>
+#include <sys/stat.h>
 
 #define bool int
 #define true 1
 #define false 0
-#define assert(expr) if(!(expr)) *(char*)0 = 0;
 
 #define float64 double
 #define KILO (1024)
 #define MEGA (1024 * KILO)
 #define GIGA (1024 * MEGA)
 
-
 #define SCREEN_WIDTH (1080)
 #define SCREEN_HEIGHT (720)
-#define PER_CHAR_WIDTH (1256.0f / 95.0f)
-#define PER_CHAR_HEIGHT 28
-#define CHAR_PER_ROW ((SCREEN_WIDTH)/(PER_CHAR_WIDTH))
+#define CHAR_WIDTH (1256.0f/95.25f)
+#define CHAR_HEIGHT (28.0f)
 
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) < (b)) ? (a) : (b))
@@ -30,6 +29,15 @@ typedef struct {
     int b;
 } Color;
 
+typedef struct {
+    char date[11];
+    char time[9];
+    int days;
+    int seconds;
+    double temperature;
+    double pressure;
+} Data;
+
 Color
 RGB(int r, int g, int b) {
     Color color;
@@ -39,130 +47,8 @@ RGB(int r, int g, int b) {
     return color;
 }
 
-typedef struct {
-    char* buffer;
-    int size;
-    int gapIncrement;
-    int gapLeft;
-    int gapRight;
-} GapBuffer;
-
-int
-GapBuffer_FindLastVisualRow(const GapBuffer* gapBuffer, const int charPerRow, const int start) {
-    int steps = 0;
-    while (start - steps >= 0 && gapBuffer->buffer[start - steps] != '\n') ++steps;
-    return start - (steps % charPerRow);
-}
-
 void
-GapBuffer_FindVisualRowsAround(const GapBuffer* gapBuffer,
-			       const int charPerRow,
-			       const int lStart, const int rStart,
-			       int* left, int* right) {
-    int _left = GapBuffer_FindLastVisualRow(gapBuffer, charPerRow, lStart);
-    if (left) *left = _left;
-
-    if (right) {
-	int leftDist = lStart - _left;
-	int steps;
-	for (steps = 0; rStart + steps < gapBuffer->size && gapBuffer->buffer[rStart + steps] != '\n'; ++steps);
-	*right = rStart + min(charPerRow - leftDist, steps);
-    }
-}
-
-void
-GapBuffer_MoveGap(GapBuffer* gapBuffer, int movement) {
-    int gapSize = gapBuffer->gapRight - gapBuffer->gapLeft;
-    int nonGapSize = gapBuffer->size - gapSize;
-    int newLeft = max(0, min(nonGapSize, gapBuffer->gapLeft + movement));
-    int actualMove = newLeft - gapBuffer->gapLeft;
-    int newRight = gapBuffer->gapRight + actualMove;
-    int source, destination;
-    int dir = actualMove/abs(actualMove);
-
-    if (actualMove < 0) { //copy [newleft, left] into [newright, right] 
-	source = gapBuffer->gapLeft - 1;
-	destination = gapBuffer->gapRight - 1;
-    } else { // copy [right, newright] into [left, newleft]
-	source = gapBuffer->gapRight ;
-	destination = gapBuffer->gapLeft;
-    }
-	
-    for (int i = 0; i < abs(actualMove); ++i) {
-	gapBuffer->buffer[destination+i*dir] = gapBuffer->buffer[source+i*dir];
-	gapBuffer->buffer[source+i*dir] = '?';
-    }
-    gapBuffer->gapLeft = newLeft;
-    gapBuffer->gapRight = newRight;
-}
-
-void
-GapBuffer_Expand(GapBuffer* gapBuffer) {
-    int newSize = gapBuffer->size + gapBuffer->gapIncrement;
-    int newRight = gapBuffer->gapRight + gapBuffer->gapIncrement;
-    char* newBuffer = malloc(newSize * sizeof(char));
-    for (int i = 0; i < gapBuffer->gapLeft; ++i) {
-	newBuffer[i] = gapBuffer->buffer[i];
-    }
-    for (int i = gapBuffer->gapLeft; i < newRight; ++i) {
-	newBuffer[i] = '\0';
-    }
-    for (int i = gapBuffer->gapRight; i < gapBuffer->size; ++i) {
-	newBuffer[i + gapBuffer->gapIncrement] = gapBuffer->buffer[i];
-    }
-    free(gapBuffer->buffer);
-    gapBuffer->buffer = newBuffer;
-    gapBuffer->size = newSize;
-    gapBuffer->gapRight = newRight;
-    printf("DOMAIN EXPANSION\n");
-}
-
-void
-GapBuffer_PutChar(GapBuffer* gapBuffer, char c) {
-    gapBuffer->buffer[gapBuffer->gapLeft] = c;
-    ++gapBuffer->gapLeft;
-    if (gapBuffer->gapLeft == gapBuffer->gapRight) {
-	GapBuffer_Expand(gapBuffer);
-    }
-}
-
-void
-GapBuffer_DeleteChar(GapBuffer* gapBuffer) {
-    if (gapBuffer->gapLeft > 0) {
-	--gapBuffer->gapLeft;
-	gapBuffer->buffer[gapBuffer->gapLeft] = '\0';
-    }
-}
-
-bool
-GapBuffer_SaveFile(const GapBuffer* gapBuffer, char* filename) {
-    FILE* file = fopen(filename, "w");
-    if (file == NULL) {
-	SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION,
-		       SDL_LOG_PRIORITY_ERROR,
-		       "Couldn't save %s\n", filename);
-	return  false;
-    }
-
-    int bytesWrote = 0;
-    for (int i = 0; i < gapBuffer->size; ++i) {
-	if (i == gapBuffer->gapLeft) {
-	    i = gapBuffer->gapRight - 1;
-	} else {
-	    char c = gapBuffer->buffer[i];
-	    ++bytesWrote;
-	    if (c == '\0') break;
-	    fputc(c, file);
-	}
-    }
-    printf("Wrote %d bytes to file %s\n", bytesWrote, filename);
-
-    fclose(file);
-    return true;
-}
-
-void
-ExitSequence(SDL_Window* window, SDL_Renderer* renderer) {
+ExitSequence(SDL_Window* window, SDL_Renderer* renderer, Data* data) {
     printf("Exit...");
    
     IMG_Quit();
@@ -176,13 +62,20 @@ ExitSequence(SDL_Window* window, SDL_Renderer* renderer) {
 	renderer = NULL;
     }
 
+    if (data) {
+	free(data);
+	data = NULL;
+    }
+    
     SDL_Quit();
     printf("Complete.\n");
+
+    exit(1);
 }
 
 void
-BlitText(SDL_Renderer* renderer, SDL_Texture *atlas, char c, int x, int y) {
-    float width = PER_CHAR_WIDTH;
+BlitChar(SDL_Renderer* renderer, SDL_Texture *atlas, char c, int x, int y) {
+    float width = CHAR_WIDTH;
 
     SDL_Rect dest;
     dest.x = x;
@@ -198,6 +91,55 @@ BlitText(SDL_Renderer* renderer, SDL_Texture *atlas, char c, int x, int y) {
     SDL_RenderCopy(renderer, atlas, &src, &dest);
 }
 
+void
+BlitChars(SDL_Renderer* renderer, SDL_Texture* atlas, char* s, int count, int x, int y) {
+    for (int i = 0; i < count; ++i) {
+	BlitChar(renderer, atlas, s[i], x, y);
+	x += CHAR_WIDTH;
+    }
+}
+
+
+void DataExpand(Data *data, int* dataCap) {
+    Data* new = (Data*)malloc((*dataCap + MEGA) * sizeof(Data));
+    memccpy(new, data, *dataCap, sizeof(Data));
+    free(data);
+    data = new;
+    *dataCap += MEGA;
+    printf("Data expanded to %dMB\n", *dataCap/MEGA);
+}
+
+void SDL_SetRenderDrawColorRGB(SDL_Renderer* renderer, Color color) {
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 255);
+}
+
+double LinearMap(double value, double fromLow, double fromHigh, double toLow, double toHigh) {
+    return (value - fromLow) / (fromHigh - fromLow) * (toHigh - toLow) + toLow;
+}
+
+void
+DrawDottedLine(SDL_Renderer* renderer, int x1, int y1, int x2, int y2, float shift) {
+    float dx = (float)(x2 - x1);
+    float dy = (float)(y2 - y1);
+    float length = sqrt(dx*dx + dy*dy);
+    float segmentLength = 3.0f;
+    int segmentCount = (int)(length / segmentLength);
+    float dxs = dx / segmentCount;
+    float dys = dy / segmentCount;
+    shift = shift - floorf(shift);
+    int x = x1 + shift * 2 * dxs;
+    int y = y1 + shift * 2 * dys;
+    if (shift > 0.5f) {
+	SDL_RenderDrawLine(renderer, x1, y1, x - shift*dxs, y - shift*dys);
+    }
+    for (int i = 0; i < segmentCount - 2; i += 2) {
+	SDL_RenderDrawLine(renderer, x, y, x + dxs, y + dys);
+	x += dxs * 2;
+	y += dys * 2;
+    }
+    SDL_RenderDrawLine(renderer, x, y, x1 + segmentCount * dxs, y2 + segmentCount * dys);
+}
+
 int
 main(int argc, char* argv[]) {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -205,7 +147,7 @@ main(int argc, char* argv[]) {
 	return 0;
     }
 
-    SDL_Window* window = SDL_CreateWindow("texteditor",
+    SDL_Window* window = SDL_CreateWindow("Weather Data Monitoring",
 					  SDL_WINDOWPOS_UNDEFINED,
 					  SDL_WINDOWPOS_UNDEFINED,
 					  SCREEN_WIDTH, SCREEN_HEIGHT,
@@ -213,7 +155,7 @@ main(int argc, char* argv[]) {
 
     if (!window) {
 	printf("create window failed");
-	ExitSequence(window, NULL);
+	ExitSequence(window, NULL, NULL);
     }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
@@ -222,56 +164,71 @@ main(int argc, char* argv[]) {
 						SDL_RENDERER_ACCELERATED);
     if (!renderer) {
 	printf("create renderer failed");
-	ExitSequence(window, renderer);
+	ExitSequence(window, renderer, NULL);
     }
 
     /* Init IMG */
     if (IMG_Init(IMG_INIT_PNG) < 0) {
 	printf("IMG_Init failed\n");
-	ExitSequence(window, renderer);
+	ExitSequence(window, renderer, NULL);
     }
-
+    
     /* load font atlas png */
     SDL_Texture* fontAtlas;
     char* fontFile = "firamono.png";
-    SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO, "Loading %s\n", fontFile);
+    printf("Loading %s\n", fontFile);
     fontAtlas = IMG_LoadTexture(renderer, fontFile);
     if (!fontAtlas) {
-	SDL_LogMessage(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_ERROR, "Failed to load %s\n", fontFile);
+	printf("Failed to load %s\n", fontFile);
     }
     
     printf("Init Successful\n");
 
-    /* read default file */
-    GapBuffer gapBuffer;
-    gapBuffer.buffer = NULL;
-    char* filename = "test";
+    Data* data = (Data*)malloc(MEGA * sizeof(Data));
+    struct stat file_info;
+    int dataCap = MEGA;
+    int dataIndex = 0;
+    double tempMin = 100;
+    double tempMax = -100;
+    double pressMin = 10000;
+    double pressMax = 0;
+    
+    /* read data file */
+    char* filename = "../data.txt";
     if (argc == 2) filename = argv[1];
     FILE* file = fopen(filename, "r");
     printf("Opening file %s\n", filename);
     if (file == NULL) {
-	printf("Error opening file\n");
-	ExitSequence(window, renderer);
+	printf("Can't open file\n");
+	ExitSequence(window, renderer, data);
     } else {
-	fseek(file, 0, SEEK_END);
-	long long fileSize = ftell(file);
-
-	if (fileSize == -1) {
-	    printf("Error getting file size\n");
+	// Load data file
+	if (stat(filename, &file_info) != 0) {
+	    printf("Failed to retrieve file edit time\n");
 	} else {
-	    printf("File size: %lld bytes\n", fileSize);
-	    fseek(file, 0, SEEK_SET);
-	    
-	    gapBuffer.gapIncrement = 128;
-	    gapBuffer.size = fileSize + gapBuffer.gapIncrement;
-	    gapBuffer.buffer = malloc(gapBuffer.size * sizeof(char));
-	    gapBuffer.gapLeft = 0;
-	    gapBuffer.gapRight = gapBuffer.gapLeft + gapBuffer.gapIncrement;
-	    
-	    fread(&gapBuffer.buffer[gapBuffer.gapRight], 1, fileSize, file);
-	}	    
+	    printf("File size: %lld bytes\n", (long long)file_info.st_size);	    
+	    Data inData;
+	    while (fscanf(file, "%s %s %lf %lf", inData.date, inData.time, &inData.temperature, &inData.pressure) == 4) {
+		tempMin = min(tempMin, inData.temperature);
+		tempMax = max(tempMax, inData.temperature);
+		pressMin = min(pressMin, inData.pressure);
+		pressMax = max(pressMax, inData.pressure);
+		if (dataIndex == dataCap) {
+		    DataExpand(data, &dataCap);
+		}
+		int year, month, day;
+		int hour, minute, second;
+		sscanf(inData.date, "%d-%d-%d", &year, &month, &day);
+		inData.days = 365*year + 30*month + day;
+		sscanf(inData.time, "%d-%d-%d", &hour, &minute, &second);
+		inData.seconds = 3600*hour + 60*minute + second;
+		data[dataIndex] = inData;
+		++dataIndex;
+	    }
+	}
 
 	fclose(file);
+	printf("Read %d rows from file\n", dataIndex);
     }
 
     /* main loop */
@@ -280,23 +237,19 @@ main(int argc, char* argv[]) {
     float64 frameTimeBudget = 1000.0/(float64)(targetFPS); // in ms
     clock_t lastTick = clock();
     float64 frameTime = 0;
-    float delta = (float)frameTimeBudget;
+    float delta = (float)frameTimeBudget/1000.0f;
     Uint32 sleepTime;
-    int tabSpaceRatio = 4;
 
-    bool initModState = SDL_GetModState();
-    bool shiftDown = initModState & KMOD_SHIFT;
-    bool ctrlDown  = initModState & KMOD_CTRL;
-    bool altDown   = initModState & KMOD_ALT;
-    bool capslock  = initModState & KMOD_CAPS;
+    const Color backgroundColor = RGB(54,51,95);
+    const Color graphFrameColor = RGB(255,255,255);
+    const Color tempDataColor = RGB(219,217,247);
+    const Color pressLineColor = RGB(80,220,162);
+    const Color dottedLineColor = RGB(255,255,255);
+    const Color tempDefinitionLineColor = RGB(82,11,16);
+    const Color pressDefinitionLineColor = RGB(21,53,18);
+    const Color tempGraphBG = RGB(166,33,88);
+    const Color pressGraphBG = RGB(77,90,54);
 
-    const Color backgroundColor = RGB(97,85,52);
-    const Color gapBufferVisualColor = RGB(255,255,0);
-    const Color renderRangeColor = RGB(0,255,0);
-    const Color renderHeadColor = RGB(222,208,164);
-
-    float visualDrawRow = 0;
-    
     while (running) {
 	/* event handling */
 	SDL_Event event;
@@ -305,216 +258,182 @@ main(int argc, char* argv[]) {
 	    case SDL_QUIT: { running = false; } break;
 	    case SDL_KEYDOWN: {
 		switch (event.key.keysym.sym) {
-		case SDLK_LSHIFT: case SDLK_RSHIFT: { shiftDown = true; } break;
-		case SDLK_LCTRL:  case SDLK_RCTRL:  {  ctrlDown = true; } break;
-		case SDLK_LALT:   case SDLK_RALT:   {   altDown = true; } break;
-		case SDLK_s: {
-		    if (ctrlDown) {
-			printf("Save command received\n");
-			GapBuffer_SaveFile(&gapBuffer, filename);
-		    }
-		} break;
-		case SDLK_f: {
-		    if (ctrlDown) {
-			printf("Open file command received\n");
-		    }
-		} break;
-		case SDLK_LEFT:  { GapBuffer_MoveGap(&gapBuffer, -1); } break;
-		case SDLK_RIGHT: { GapBuffer_MoveGap(&gapBuffer,  1); } break;
-		case SDLK_UP: {
-		    int lastRow = GapBuffer_FindLastVisualRow(&gapBuffer, CHAR_PER_ROW, gapBuffer.gapLeft);
-		    if (lastRow == -1) {
-			GapBuffer_MoveGap(&gapBuffer, 0 - gapBuffer.gapLeft);
-		    } else {
-			const int lastRowDist = gapBuffer.gapLeft - lastRow;
-			int lastLastRow = GapBuffer_FindLastVisualRow(&gapBuffer, CHAR_PER_ROW, lastRow - 1);
-			const int last2RowDist = lastRow - lastLastRow;
-			int newLeft = lastLastRow + min(lastRowDist, last2RowDist);
-			GapBuffer_MoveGap(&gapBuffer, newLeft - gapBuffer.gapLeft);
-		    }
-		} break;
-		case SDLK_DOWN: {
-		    int lastRow, nextRow;
-		    GapBuffer_FindVisualRowsAround(&gapBuffer,CHAR_PER_ROW,
-						   gapBuffer.gapLeft,gapBuffer.gapRight,
-						   &lastRow,&nextRow);
-		    if (nextRow == gapBuffer.size) {
-			GapBuffer_MoveGap(&gapBuffer, gapBuffer.size - gapBuffer.gapRight - gapBuffer.gapLeft);
-		    } else {
-			int next2RowDist;
-			for (next2RowDist = 1; next2RowDist < CHAR_PER_ROW; ++next2RowDist) {
-			    if (nextRow + next2RowDist == gapBuffer.size ||
-				gapBuffer.buffer[nextRow + next2RowDist] == '\n') {
-				break;
-			    }
-			}
-			int movement = (nextRow - gapBuffer.gapRight) + min(gapBuffer.gapLeft - lastRow, next2RowDist);
-			GapBuffer_MoveGap(&gapBuffer, movement);
-		    }
-		} break;
 		case SDLK_ESCAPE: { running = false; } break;
-		case SDLK_BACKSPACE: { GapBuffer_DeleteChar(&gapBuffer); } break;
-		case SDLK_RETURN: { GapBuffer_PutChar(&gapBuffer, '\n'); } break;
-		case SDLK_TAB: {
-		    for (int i = 0; i < tabSpaceRatio; ++i) {
-			GapBuffer_PutChar(&gapBuffer, ' ');
-		    }
-		} break;
-		}
-		// inputs that should be put into the buffer
-		if (!ctrlDown &&
-		     32 <= event.key.keysym.sym &&
-		    126 >= event.key.keysym.sym) {
-		    char inputChar = event.key.keysym.sym;
-
-		    // capitalize alphabet keys
-		    if ((shiftDown || capslock) &&
-			 97 <= event.key.keysym.sym &&
-			122 >= event.key.keysym.sym) {
-			inputChar -= 32;
-		    }
-
-		    // keys that turn into other keys when shift is down
-		    if (shiftDown) {
-			switch (inputChar) {
-			case '0': { inputChar = ')'; } break;
-			case '1': { inputChar = '!'; } break;
-			case '2': { inputChar = '@'; } break;
-			case '3': { inputChar = '#'; } break;
-			case '4': { inputChar = '$'; } break;
-			case '5': { inputChar = '%'; } break;
-			case '6': { inputChar = '^'; } break;
-			case '7': { inputChar = '&'; } break;
-			case '8': { inputChar = '*'; } break;
-			case '9': { inputChar = '('; } break;
-			case ',': { inputChar = '<'; } break;
-			case '.': { inputChar = '>'; } break;
-			case '/': { inputChar = '?'; } break;
-			case '`': { inputChar = '~'; } break;
-			case '[': { inputChar = '{'; } break;
-			case ']': { inputChar = '}'; } break;
-			case '-': { inputChar = '_'; } break;
-			case '\\':{ inputChar = '|'; } break;
-			case ';': { inputChar = ':'; } break;
-			case '\'':{ inputChar = '"'; } break;
-			case '=': { inputChar = '+'; } break;
-			}
-		    }
-		    printf("input:%d(%c)\n",(int)inputChar, inputChar);
-		    GapBuffer_PutChar(&gapBuffer, inputChar);
-		}
-	    } break;
-	    case SDL_KEYUP: {
-		switch (event.key.keysym.sym) {
-		case SDLK_LSHIFT: case SDLK_RSHIFT: { shiftDown = false; } break;
-		case SDLK_LCTRL:  case SDLK_RCTRL:  {  ctrlDown = false; } break;
-		case SDLK_LALT:   case SDLK_RALT:   {   altDown = false; } break;
-		case SDLK_CAPSLOCK: { capslock = !capslock;} break;
 		}
 	    } break;
 	    }
 	}
 
-	SDL_SetRenderDrawColor(renderer,
-			       backgroundColor.r,
-			       backgroundColor.g,
-			       backgroundColor.b,
-			       255);
+	/* check if file updated */
+	struct stat new_info;
+	if (stat(filename, &new_info) != 0) {
+	    printf("Failed to retrieve file edit time\n");
+	} else if (file_info.st_size != new_info.st_size) {
+	    printf("File size went from %ld to %ld, reading new entries\n", file_info.st_size, new_info.st_size);
+	    file_info = new_info;
+	    
+	    FILE* file = fopen(filename, "r");
+	    if (file == NULL) {
+		printf("Can't open file\n");
+	    } else {
+		// Load data file
+		int row = 0;
+		char buffer[50];
+		while (row < dataIndex && fgets(buffer, sizeof(buffer), file) != NULL) {
+		    ++row;
+		}
+		Data inData;
+		int newRows = 0;
+		while (fscanf(file, "%s %s %lf %lf", inData.date, inData.time, &inData.temperature, &inData.pressure) == 4) {
+		    tempMin = min(tempMin, inData.temperature);
+		    tempMax = max(tempMax, inData.temperature);
+		    pressMin = min(pressMin, inData.pressure);
+		    pressMax = max(pressMax, inData.pressure);
+		    if (dataIndex == dataCap) {
+			DataExpand(data, &dataCap);
+		    }
+		    data[dataIndex] = inData;
+		    ++dataIndex;
+		    ++newRows;
+		}
+		fclose(file);
+		printf("Read %d new rows from file\n", newRows);
+	    }
+	}	
+	SDL_SetRenderDrawColorRGB(renderer,backgroundColor);
 	SDL_RenderClear(renderer);
-	
-	/* find render start by back trace from gapleft for five newlines/linelengths */
-	const int rowsHalfScreen = SCREEN_HEIGHT / PER_CHAR_HEIGHT / 2;
-	const int charPerRow = SCREEN_WIDTH / PER_CHAR_WIDTH;
-	int targetDrawHead = gapBuffer.gapLeft;
-	for (int i = 0; i < rowsHalfScreen;++i) {
-	    targetDrawHead = GapBuffer_FindLastVisualRow(&gapBuffer, CHAR_PER_ROW, targetDrawHead - 1);
-	    if (targetDrawHead < 0) break;
-	}
-	++targetDrawHead;
-	int renderEnd = gapBuffer.size;
 
-	/* render text */
-	float x = 0;
-	float y = 0;
-	int textIndex = targetDrawHead;
-	while (textIndex < gapBuffer.size) {
-	    if (x > SCREEN_WIDTH - PER_CHAR_WIDTH) {
-		y += PER_CHAR_HEIGHT;
-		x = 0;
-	    }
-	    if (textIndex == gapBuffer.gapLeft) {
-		textIndex = gapBuffer.gapRight;
-		/* draw point */
-		SDL_Rect pointRect;
-		pointRect.x = x;
-		pointRect.y = y;
-		pointRect.w = PER_CHAR_WIDTH;
-		pointRect.h = PER_CHAR_HEIGHT;
-		SDL_SetRenderDrawColor(renderer,
-				       renderHeadColor.r,
-				       renderHeadColor.g,
-				       renderHeadColor.b,
-				       255);
-		SDL_RenderDrawRect(renderer, &pointRect);
-	    }
-	    char c = gapBuffer.buffer[textIndex];
-	    if (c == '\0' || y > SCREEN_HEIGHT + PER_CHAR_HEIGHT) {
-		renderEnd = textIndex;
+	/* draw stuff */
+	/* prepare some numbers */
+	int graphY = 100;
+	int graphW = 400;
+	int graphH = 300;
+	int graphY2 = graphY + graphH;
+
+	int tempGraphX = 100;
+	int tempGraphX2 = tempGraphX + graphW * 0.85f;
+	float tempDisplayRangeLow = (tempMax - tempMin) * -0.2 + tempMin;
+	float tempDisplayRangeHigh = tempMax + (tempMax - tempMin) * 0.2;
+	
+	int pressGraphX = SCREEN_WIDTH - 100 - graphW;
+	int pressGraphX2 = pressGraphX + graphW * 0.85f;
+	float pressDisplayRangeLow = (pressMax - pressMin) * -0.2 + pressMin;
+	float pressDisplayRangeHigh = pressMax + (pressMax - pressMin) * 0.2;
+
+	/* graph titles */
+	BlitChars(renderer, fontAtlas, "Temperature (Celsius)", 22, tempGraphX, graphY - CHAR_HEIGHT);
+	BlitChars(renderer, fontAtlas, "Atomospheric Pressure (Millibar)", 33, pressGraphX, graphY - CHAR_HEIGHT);
+	
+	/* graph background */
+	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+	SDL_Rect tempRect;
+	tempRect.x = tempGraphX;
+	tempRect.y = graphY;
+	tempRect.w = graphW;
+	tempRect.h = graphH;
+	SDL_SetRenderDrawColorRGB(renderer, tempGraphBG);
+	SDL_RenderFillRect(renderer, &tempRect);
+
+	SDL_Rect pressRect;
+	pressRect.x = pressGraphX;
+	pressRect.y = graphY;
+	pressRect.w = graphW;
+	pressRect.h = graphH;
+	SDL_SetRenderDrawColorRGB(renderer, pressGraphBG);
+	SDL_RenderFillRect(renderer, &pressRect);
+	
+	/* Temperature */
+	/* Horizontal whole number lines */
+	float tempDefinitionLevels[6] = { 5.0f,2.0f,1.0f,0.5f,0.2f,0.1f };
+	float tempDisplayDiff = (tempDisplayRangeHigh - tempDisplayRangeLow) / 4.0f;
+	float tempDefinitionLevel = tempDefinitionLevels[0];
+	for (int i = 0; i < 6; ++i) {
+	    if (tempDisplayDiff < tempDefinitionLevels[i]) {
+		tempDefinitionLevel = tempDefinitionLevels[i];
+	    } else {
 		break;
 	    }
-	    if (c == '\n') {
-		y += PER_CHAR_HEIGHT;
-		x = 0;
-		++textIndex;
+	}
+	float lineValue = 0;
+	while (lineValue < tempDisplayRangeLow) {
+	    lineValue += tempDefinitionLevel;
+	}
+	SDL_SetRenderDrawColorRGB(renderer, tempDefinitionLineColor);
+	while (lineValue < tempDisplayRangeHigh) {
+	    int y = (int)(LinearMap(lineValue, tempDisplayRangeLow, tempDisplayRangeHigh, graphY2, graphY));
+	    SDL_RenderDrawLine(renderer, tempGraphX, y, tempGraphX + graphW, y);
+	    lineValue += tempDefinitionLevel;
+	}
+
+	/* Pressure */
+	/* Horizontal whole number lines */
+	float pressDefinitionLevels[6] = { 20.0f, 10.0f, 4.0f, 2.0f, 0.5f, 0.1f };
+	float pressDisplayDiff = (pressDisplayRangeHigh - pressDisplayRangeLow) / 4.0f;
+	float pressDefinitionLevel = pressDefinitionLevels[0];
+	for (int i = 0; i < 6; ++i) {
+	    if (pressDisplayDiff <= pressDefinitionLevels[i]) {
+		pressDefinitionLevel = pressDefinitionLevels[i];
 	    } else {
-		BlitText(renderer, fontAtlas, c, x, y);
-		if (c == '\t') {
-		    x += tabSpaceRatio * PER_CHAR_WIDTH;
-		} else {
-		    x += PER_CHAR_WIDTH;
-		}
-		++textIndex;
+		break;
+	    }
+	}
+	lineValue = 0;
+	while (lineValue < pressDisplayRangeLow) {
+	    lineValue += pressDefinitionLevel;
+	}
+	SDL_SetRenderDrawColorRGB(renderer, pressDefinitionLineColor);
+	while (lineValue < pressDisplayRangeHigh) {
+	    int y = (int)(LinearMap(lineValue, pressDisplayRangeLow, pressDisplayRangeHigh, graphY2, graphY));
+	    SDL_RenderDrawLine(renderer, pressGraphX, y, pressGraphX + graphW, y);
+	    lineValue += pressDefinitionLevel;
+	}
+	
+	
+	/* Data points */
+	/* Temperature */
+	static float shift = 0;
+	shift += delta * 3;
+	SDL_SetRenderDrawColorRGB(renderer, tempDataColor);
+	for (int i = 0; i < dataIndex; ++i) {
+	    Data item = data[i];
+	    int x = ((int)LinearMap(i, 0, dataIndex, tempGraphX, tempGraphX2));
+	    int y = ((int)LinearMap(item.temperature, tempDisplayRangeLow, tempDisplayRangeHigh, graphY2, graphY));
+	    SDL_RenderDrawPoint(renderer, x, y);
+	    if (item.temperature == tempMin || item.temperature == tempMax) {
+		/* horizontal dotted line */
+		char s[6];
+		sprintf(s, "%.2f", item.temperature);
+		BlitChars(renderer, fontAtlas, s,4, tempGraphX - 4.5 * CHAR_WIDTH, y - CHAR_HEIGHT/2);
+		SDL_SetRenderDrawColorRGB(renderer, dottedLineColor);
+		DrawDottedLine(renderer, tempGraphX - CHAR_WIDTH/2, y, x, y, shift);
+		SDL_SetRenderDrawColorRGB(renderer, tempDataColor);
 	    }
 	}
 
-	/* render gap buffer visualization */
-	SDL_SetRenderDrawColor(renderer,255,0,0,255);
-        float unitWidth = (float)SCREEN_WIDTH / gapBuffer.size;
-	float unitHeight = 20;
+	/* Pressure */
+	SDL_SetRenderDrawColorRGB(renderer, pressLineColor);
+	for (int i = 0; i < dataIndex; ++i) {
+	    Data item = data[i];
+	    int x = ((int)LinearMap(i, 0, dataIndex, pressGraphX, pressGraphX2));
+	    int y = ((int)LinearMap(item.pressure, pressDisplayRangeLow, pressDisplayRangeHigh, graphY2, graphY));
+	    SDL_RenderDrawPoint(renderer, x, y);
+	    if (item.pressure == pressMin || item.pressure == pressMax) {
+		/* horizontal dotted line */
+		char s[6];
+		sprintf(s, "%.2f", item.pressure);
+		BlitChars(renderer, fontAtlas, s,4, pressGraphX - 4.5 * CHAR_WIDTH, y - CHAR_HEIGHT/2);
+		SDL_SetRenderDrawColorRGB(renderer, dottedLineColor);
+		DrawDottedLine(renderer, pressGraphX - CHAR_WIDTH/2, y, x, y, shift);
+		SDL_SetRenderDrawColorRGB(renderer, pressLineColor);
+	    }
+	}
 
-	SDL_Rect gapRect;
-	/* pre-left */
-	gapRect.x = 0;
-	gapRect.y = SCREEN_HEIGHT-unitHeight;
-	gapRect.w = gapBuffer.gapLeft * unitWidth;
-	gapRect.h = unitHeight;
-	
-        SDL_RenderFillRect(renderer, &gapRect);
 
-	/* gap */
-	gapRect.x = gapBuffer.gapLeft * unitWidth;
-	gapRect.w = (gapBuffer.gapRight - gapBuffer.gapLeft) * unitWidth;
-	
-	SDL_RenderDrawRect(renderer, &gapRect);
-
-	/* post-right */
-	gapRect.x += gapRect.w;
-	gapRect.w = (gapBuffer.size - gapBuffer.gapRight) * unitWidth;
-
-	SDL_RenderFillRect(renderer, &gapRect);
-
-	/* rendered region */
-	SDL_SetRenderDrawColor(renderer,
-			       renderRangeColor.r,
-			       renderRangeColor.g,
-			       renderRangeColor.b,
-			       255);
-	gapRect.y += 1;
-	gapRect.x = targetDrawHead * unitWidth;
-	gapRect.w = (renderEnd - targetDrawHead) * unitWidth;
-	gapRect.h -= 2;
-	SDL_RenderDrawRect(renderer, &gapRect);
-	
+	/* frame */
+	SDL_SetRenderDrawColorRGB(renderer,graphFrameColor);
+	SDL_RenderDrawRect(renderer, &tempRect);
+	SDL_SetRenderDrawColorRGB(renderer,graphFrameColor);
+	SDL_RenderDrawRect(renderer, &pressRect);
         SDL_RenderPresent(renderer);
 
 	/* Timing and sleeping */
@@ -525,16 +444,15 @@ main(int argc, char* argv[]) {
 	frameTime = 1000.0 * (double)(clock() - lastTick) / (double)(CLOCKS_PER_SEC);
 	if (frameTime > frameTimeBudget) {
 	    printf("WARNING: Missed frame, frame time was %.3fms\n", frameTime);
-	    delta = (float)frameTime;
+	    delta = (float)frameTime/1000.0f;
 	} else {
 	    sleepTime = (Uint32)(frameTimeBudget - frameTime);
 	    SDL_Delay(sleepTime);
-	    delta = (float)sleepTime + (float)frameTime;
+	    delta = frameTimeBudget/1000.0f;
 	}
 	lastTick = clock();
     }
 
-    free(gapBuffer.buffer);
-    ExitSequence(window, renderer);
+    ExitSequence(window, renderer, data);
     return 0;
 }
