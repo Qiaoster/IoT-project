@@ -17,8 +17,10 @@
 
 #define SCREEN_WIDTH (1080)
 #define SCREEN_HEIGHT (720)
-#define CHAR_WIDTH (1256.0f/95.25f)
+#define CHAR_WIDTH (1223.0f/90.0f)
 #define CHAR_HEIGHT (28.0f)
+#define SMALL_CHAR_WIDTH (571.0f/90.0f)
+#define SMALL_CHAR_HEIGHT (14.0f)
 
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) < (b)) ? (a) : (b))
@@ -74,28 +76,26 @@ ExitSequence(SDL_Window* window, SDL_Renderer* renderer, Data* data) {
 }
 
 void
-BlitChar(SDL_Renderer* renderer, SDL_Texture *atlas, char c, int x, int y) {
-    float width = CHAR_WIDTH;
-
+BlitChar(SDL_Renderer* renderer, SDL_Texture *atlas, char c, int x, int y, int charWidth) {
     SDL_Rect dest;
     dest.x = x;
     dest.y = y;
-    dest.w = width;
+    dest.w = charWidth;
     SDL_QueryTexture(atlas, NULL, NULL, NULL, &dest.h);
     
     SDL_Rect src;
-    src.x = ((int)c - 32) * width; /* the first 32 ascii codes aren't on the atlas */
+    src.x = ((int)c - 32) * charWidth; /* the first 32 ascii codes aren't on the atlas */
     src.y = 0;
-    src.w = (int)width;
+    src.w = (int)charWidth;
     src.h = 31;
     SDL_RenderCopy(renderer, atlas, &src, &dest);
 }
 
 void
-BlitChars(SDL_Renderer* renderer, SDL_Texture* atlas, char* s, int count, int x, int y) {
+BlitChars(SDL_Renderer* renderer, SDL_Texture* atlas, char* s, int count, int x, int y, int charWidth) {
     for (int i = 0; i < count; ++i) {
-	BlitChar(renderer, atlas, s[i], x, y);
-	x += CHAR_WIDTH;
+	BlitChar(renderer, atlas, s[i], x, y, charWidth);
+	x += charWidth;
     }
 }
 
@@ -175,23 +175,28 @@ main(int argc, char* argv[]) {
     
     /* load font atlas png */
     SDL_Texture* fontAtlas;
-    char* fontFile = "firamono.png";
+    char* fontFile = "font.png";
     printf("Loading %s\n", fontFile);
     fontAtlas = IMG_LoadTexture(renderer, fontFile);
     if (!fontAtlas) {
 	printf("Failed to load %s\n", fontFile);
     }
     
+    SDL_Texture* smallFontAtlas;
+    char* smallFontFile = "smallfont.png";
+    printf("Loading %s\n", smallFontFile);
+    smallFontAtlas = IMG_LoadTexture(renderer, smallFontFile);
+    if (!smallFontAtlas) {
+	printf("Failed to load %s\n", smallFontFile);
+    }
+
     printf("Init Successful\n");
 
     Data* data = (Data*)malloc(MEGA * sizeof(Data));
     struct stat file_info;
     int dataCap = MEGA;
     int dataIndex = 0;
-    double tempMin = 100;
-    double tempMax = -100;
-    double pressMin = 10000;
-    double pressMax = 0;
+    int visibleIndex = 0;
     
     /* read data file */
     char* filename = "../data.txt";
@@ -209,10 +214,6 @@ main(int argc, char* argv[]) {
 	    printf("File size: %lld bytes\n", (long long)file_info.st_size);	    
 	    Data inData;
 	    while (fscanf(file, "%s %s %lf %lf", inData.date, inData.time, &inData.temperature, &inData.pressure) == 4) {
-		tempMin = min(tempMin, inData.temperature);
-		tempMax = max(tempMax, inData.temperature);
-		pressMin = min(pressMin, inData.pressure);
-		pressMax = max(pressMax, inData.pressure);
 		if (dataIndex == dataCap) {
 		    DataExpand(data, &dataCap);
 		}
@@ -261,6 +262,11 @@ main(int argc, char* argv[]) {
 		case SDLK_ESCAPE: { running = false; } break;
 		}
 	    } break;
+	    case SDL_MOUSEWHEEL: {
+		int step = dataIndex / 100;
+		visibleIndex -= event.wheel.y * step ;
+		visibleIndex = max(0, min((dataIndex - 100), visibleIndex));
+	    } break;
 	    }
 	}
 
@@ -285,10 +291,6 @@ main(int argc, char* argv[]) {
 		Data inData;
 		int newRows = 0;
 		while (fscanf(file, "%s %s %lf %lf", inData.date, inData.time, &inData.temperature, &inData.pressure) == 4) {
-		    tempMin = min(tempMin, inData.temperature);
-		    tempMax = max(tempMax, inData.temperature);
-		    pressMin = min(pressMin, inData.pressure);
-		    pressMax = max(pressMax, inData.pressure);
 		    if (dataIndex == dataCap) {
 			DataExpand(data, &dataCap);
 		    }
@@ -303,6 +305,20 @@ main(int argc, char* argv[]) {
 	SDL_SetRenderDrawColorRGB(renderer,backgroundColor);
 	SDL_RenderClear(renderer);
 
+	/* find max and min */
+	double tempMin = 10000;
+	double tempMax = -10000;
+	double pressMin = 1000000;
+	double pressMax = 0;
+
+	for (int i = visibleIndex; i < dataIndex; ++i) {
+	    Data item = data[i];
+	    tempMin = min(tempMin, item.temperature);
+	    tempMax = max(tempMax, item.temperature);
+	    pressMin = min(pressMin, item.pressure);
+	    pressMax = max(pressMax, item.pressure);
+	}
+	
 	/* draw stuff */
 	/* prepare some numbers */
 	int graphY = 100;
@@ -321,8 +337,8 @@ main(int argc, char* argv[]) {
 	float pressDisplayRangeHigh = pressMax + (pressMax - pressMin) * 0.2;
 
 	/* graph titles */
-	BlitChars(renderer, fontAtlas, "Temperature (Celsius)", 22, tempGraphX, graphY - CHAR_HEIGHT);
-	BlitChars(renderer, fontAtlas, "Atomospheric Pressure (Millibar)", 33, pressGraphX, graphY - CHAR_HEIGHT);
+	BlitChars(renderer, fontAtlas, "Temperature (Celsius)", 22, tempGraphX, graphY - CHAR_HEIGHT, CHAR_WIDTH);
+	BlitChars(renderer, fontAtlas, "Atomospheric Pressure (Millibar)", 33, pressGraphX, graphY - CHAR_HEIGHT, CHAR_WIDTH);
 	
 	/* graph background */
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -344,8 +360,8 @@ main(int argc, char* argv[]) {
 	
 	/* Temperature */
 	/* Horizontal whole number lines */
-	float tempDefinitionLevels[6] = { 5.0f,2.0f,1.0f,0.5f,0.2f,0.1f };
-	float tempDisplayDiff = (tempDisplayRangeHigh - tempDisplayRangeLow) / 4.0f;
+	float tempDefinitionLevels[6] = { 5,2,1,0.5,0.2,0.1};
+	float tempDisplayDiff = (tempDisplayRangeHigh - tempDisplayRangeLow) / 5.0f;
 	float tempDefinitionLevel = tempDefinitionLevels[0];
 	for (int i = 0; i < 6; ++i) {
 	    if (tempDisplayDiff < tempDefinitionLevels[i]) {
@@ -362,15 +378,18 @@ main(int argc, char* argv[]) {
 	while (lineValue < tempDisplayRangeHigh) {
 	    int y = (int)(LinearMap(lineValue, tempDisplayRangeLow, tempDisplayRangeHigh, graphY2, graphY));
 	    SDL_RenderDrawLine(renderer, tempGraphX, y, tempGraphX + graphW, y);
+	    char num[6];
+	    sprintf(num, "%.2f", lineValue);
+	    BlitChars(renderer, smallFontAtlas, num,6,tempGraphX + SMALL_CHAR_WIDTH, y, SMALL_CHAR_WIDTH);
 	    lineValue += tempDefinitionLevel;
 	}
 
 	/* Pressure */
 	/* Horizontal whole number lines */
-	float pressDefinitionLevels[6] = { 20.0f, 10.0f, 4.0f, 2.0f, 0.5f, 0.1f };
+	float pressDefinitionLevels[8] = { 20.0f, 10.0f, 5,2,1,0.5,0.2,0.1 };
 	float pressDisplayDiff = (pressDisplayRangeHigh - pressDisplayRangeLow) / 4.0f;
 	float pressDefinitionLevel = pressDefinitionLevels[0];
-	for (int i = 0; i < 6; ++i) {
+	for (int i = 0; i < 8; ++i) {
 	    if (pressDisplayDiff <= pressDefinitionLevels[i]) {
 		pressDefinitionLevel = pressDefinitionLevels[i];
 	    } else {
@@ -385,47 +404,58 @@ main(int argc, char* argv[]) {
 	while (lineValue < pressDisplayRangeHigh) {
 	    int y = (int)(LinearMap(lineValue, pressDisplayRangeLow, pressDisplayRangeHigh, graphY2, graphY));
 	    SDL_RenderDrawLine(renderer, pressGraphX, y, pressGraphX + graphW, y);
+	    char num[6];
+	    sprintf(num, "%.2f", lineValue);
+	    BlitChars(renderer, smallFontAtlas, num, 6, pressGraphX+SMALL_CHAR_WIDTH, y, SMALL_CHAR_WIDTH);
 	    lineValue += pressDefinitionLevel;
 	}
 	
 	
 	/* Data points */
 	/* Temperature */
+	bool drewMin = false;
+	bool drewMax = false;
 	static float shift = 0;
 	shift += delta * 3;
 	SDL_SetRenderDrawColorRGB(renderer, tempDataColor);
-	for (int i = 0; i < dataIndex; ++i) {
+	for (int i = visibleIndex; i < dataIndex; ++i) {
 	    Data item = data[i];
-	    int x = ((int)LinearMap(i, 0, dataIndex, tempGraphX, tempGraphX2));
+	    int x = ((int)LinearMap(i, visibleIndex, dataIndex, tempGraphX, tempGraphX2));
 	    int y = ((int)LinearMap(item.temperature, tempDisplayRangeLow, tempDisplayRangeHigh, graphY2, graphY));
 	    SDL_RenderDrawPoint(renderer, x, y);
-	    if (item.temperature == tempMin || item.temperature == tempMax) {
+	    if ((item.temperature == tempMin && !drewMin) || (item.temperature == tempMax && !drewMax)) {
 		/* horizontal dotted line */
 		char s[6];
 		sprintf(s, "%.2f", item.temperature);
-		BlitChars(renderer, fontAtlas, s,4, tempGraphX - 4.5 * CHAR_WIDTH, y - CHAR_HEIGHT/2);
+		BlitChars(renderer, fontAtlas, s,4, tempGraphX - 4.5 * CHAR_WIDTH, y - CHAR_HEIGHT/2, CHAR_WIDTH);
 		SDL_SetRenderDrawColorRGB(renderer, dottedLineColor);
 		DrawDottedLine(renderer, tempGraphX - CHAR_WIDTH/2, y, x, y, shift);
 		SDL_SetRenderDrawColorRGB(renderer, tempDataColor);
 	    }
+	    if (item.temperature == tempMin) drewMin = true;
+	    if (item.temperature == tempMax) drewMax = true;
 	}
-
+	
 	/* Pressure */
+	drewMin = false;
+	drewMax = false;
 	SDL_SetRenderDrawColorRGB(renderer, pressLineColor);
-	for (int i = 0; i < dataIndex; ++i) {
+	for (int i = visibleIndex; i < dataIndex; ++i) {
 	    Data item = data[i];
-	    int x = ((int)LinearMap(i, 0, dataIndex, pressGraphX, pressGraphX2));
+	    int x = ((int)LinearMap(i, visibleIndex, dataIndex, pressGraphX, pressGraphX2));
 	    int y = ((int)LinearMap(item.pressure, pressDisplayRangeLow, pressDisplayRangeHigh, graphY2, graphY));
 	    SDL_RenderDrawPoint(renderer, x, y);
-	    if (item.pressure == pressMin || item.pressure == pressMax) {
+	    if ((item.pressure == pressMin && !drewMin) || (item.pressure == pressMax && !drewMax)) {
 		/* horizontal dotted line */
 		char s[6];
 		sprintf(s, "%.2f", item.pressure);
-		BlitChars(renderer, fontAtlas, s,4, pressGraphX - 4.5 * CHAR_WIDTH, y - CHAR_HEIGHT/2);
+		BlitChars(renderer, fontAtlas, s,6, pressGraphX + graphW + CHAR_WIDTH/2, y - CHAR_HEIGHT/2, CHAR_WIDTH);
 		SDL_SetRenderDrawColorRGB(renderer, dottedLineColor);
-		DrawDottedLine(renderer, pressGraphX - CHAR_WIDTH/2, y, x, y, shift);
+		DrawDottedLine(renderer, x, y, pressGraphX + graphW + CHAR_WIDTH/2, y, shift);
 		SDL_SetRenderDrawColorRGB(renderer, pressLineColor);
 	    }
+	    if (item.pressure == pressMin) drewMin = true;
+	    if (item.pressure == pressMax) drewMax = true;
 	}
 
 
