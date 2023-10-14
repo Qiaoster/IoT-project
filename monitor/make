@@ -1,0 +1,4 @@
+#!/bin/bash
+current_time=$(date +"%Y-%m-%d %H:%M:%S")
+echo "Building at $current_time"
+gcc -Wall -g -o exe main.c -lSDL2 -lSDL2_ttf -lSDL2_image && ./exe
