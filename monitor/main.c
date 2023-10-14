@@ -263,7 +263,7 @@ main(int argc, char* argv[]) {
 		}
 	    } break;
 	    case SDL_MOUSEWHEEL: {
-		int step = dataIndex / 100;
+		int step = dataIndex / 50;
 		visibleIndex -= event.wheel.y * step ;
 		visibleIndex = max(0, min((dataIndex - 100), visibleIndex));
 	    } break;
@@ -387,7 +387,7 @@ main(int argc, char* argv[]) {
 	/* Pressure */
 	/* Horizontal whole number lines */
 	float pressDefinitionLevels[8] = { 20.0f, 10.0f, 5,2,1,0.5,0.2,0.1 };
-	float pressDisplayDiff = (pressDisplayRangeHigh - pressDisplayRangeLow) / 4.0f;
+	float pressDisplayDiff = (pressDisplayRangeHigh - pressDisplayRangeLow) / 5.0f;
 	float pressDefinitionLevel = pressDefinitionLevels[0];
 	for (int i = 0; i < 8; ++i) {
 	    if (pressDisplayDiff <= pressDefinitionLevels[i]) {
