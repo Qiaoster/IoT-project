@@ -269,7 +269,7 @@ main(int argc, char* argv[]) {
 	    } break;
 	    }
 	}
-
+	
 	/* check if file updated */
 	struct stat new_info;
 	if (stat(filename, &new_info) != 0) {
