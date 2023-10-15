@@ -264,7 +264,7 @@ main(int argc, char* argv[]) {
 		}
 	    } break;
 	    case SDL_MOUSEWHEEL: {
-		int step = dataIndex / 50;
+		int step = dataIndex / 20;
 		targetVisibleIndex -= event.wheel.y * step ;
 		targetVisibleIndex = max(0, min((dataIndex - 100), targetVisibleIndex));
 	    } break;
