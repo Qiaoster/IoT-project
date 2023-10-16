@@ -3,6 +3,8 @@
 #include <LiquidCrystal.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClient.h>
+#include <WiFiServer.h>
 
 SFE_BMP180 sensor;
 LiquidCrystal LCD(2, 13, 14, 0, 26, 25); //[RS,EN,D4,D5,D6,D7]
@@ -11,13 +13,22 @@ LiquidCrystal LCD(2, 13, 14, 0, 26, 25); //[RS,EN,D4,D5,D6,D7]
 //deployment location altitude in meters
 
 const int wifiSets = 2;
-const char* ssid[wifiSets] = {"oi", "TPG F5B8"};
-const char* password[wifiSets] = {"okokokok", "06072010"};
+const char* ssid[wifiSets] = {"oi"};
+const char* password[wifiSets] = {"okokokok"};
 const char* serverUrl = "http://192.168.130.71:8000";
+WiFiServer server(80);
 bool online = false;
+int frameCount = 0;
 
 unsigned long thisTick, lastTick;
 
+enum OverrideState {
+  OFF,
+  ON_OPEN,
+  ON_CLOSE
+};
+
+OverrideState override = OFF;
 
 // Data
 struct Data {
@@ -30,7 +41,11 @@ const int dataMax = 100000 / sizeof(Data); // esp32 has 160k heap memory
 int writeIndex = 0;
 
 bool openWindow(double temperature, double pressure) {
-  return true;
+  if (override == ON_OPEN) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 void connect_wifi() {
@@ -105,6 +120,8 @@ void setup() {
     connect_wifi();
   }
 
+  server.begin();
+
   if (!online) {
     Serial.println("Operating in offline mode");
   }
@@ -149,116 +166,143 @@ void push_reservoir(Data data) {
   Serial.println("]");
 }
 
+
 void loop() {
-  // if disconnected, attempt reconnect
-  thisTick = millis();
-  Serial.println();
-  if (WiFi.status() != WL_CONNECTED) {
-    online = false;
-    Serial.println("wifi not connected");
-  } else {
-    online = true;
-    Serial.println("");
-    Serial.print("Connected to ");
-    Serial.println(WiFi.SSID());
-    Serial.print("IP:");
-    Serial.print(WiFi.localIP());
-    Serial.print(", MAC:");
-    Serial.println(WiFi.macAddress());
-  }
-
-  int reconnectInterval = 60000; // 1min = 60s = 60,000ms
-  if (!online && (thisTick - lastTick > reconnectInterval)) {
-    connect_wifi();
-    lastTick = thisTick;
-  }
-
-  Serial.print("provided altitude: ");
-  Serial.print(PERTH_ALTITUDE, 0);
-  Serial.println(" meters");
-  LCD.clear();
-
-  Data data;
-
-  // if startTemperature() successful, number of ms to wait is returned
-  // otherwise 0 is returned
-  char tempQueryReturn = sensor.startTemperature();
-  if (tempQueryReturn == 0) {
-    Serial.println("startTemperature failed and returned 0");
-    LCD.print("N/A C, ");
-  } else {
-    delay(tempQueryReturn);
-
-    // temperature measurement
-    tempQueryReturn = sensor.getTemperature(data.temperature);
-    if (tempQueryReturn != 0) {
-      double fahrenheit = (9.0 / 5.0) * data.temperature + 32.0;
-      Serial.print("temperature: ");
-      Serial.print(data.temperature, 2);
-      Serial.print(" deg C, ");
-      Serial.print(fahrenheit, 2);
-      Serial.println(" deg F");
-
-      LCD.print(data.temperature, 2);
-      LCD.print("C,");
-    }
-  }
-
-  char presQueryReturn = sensor.startPressure(3);
-  if (presQueryReturn == 0) {
-    printf("startPressure failed and returned 0");
-    LCD.print("N/A mb");
-  } else {
-    delay(presQueryReturn);
-
-    // this function requires temperature to calculate pressure
-    presQueryReturn = sensor.getPressure(data.pressure, data.temperature);
-    if (presQueryReturn == 0) {
-      Serial.println("getPressure failed and returned 0");
+  ++frameCount;
+  if (frameCount > 5000 * 30) {
+    frameCount = 0;
+    // if disconnected, attempt reconnect
+    thisTick = millis();
+    Serial.println();
+    if (WiFi.status() != WL_CONNECTED) {
+      online = false;
+      Serial.println("wifi not connected");
     } else {
-      double inHg = data.pressure * 0.0295333727;
-      Serial.print("absolute pressure: ");
-      Serial.print(data.pressure, 2);
-      Serial.print(" mb, ");
-      Serial.print(inHg, 2);
-      Serial.println(" inHg");
+      online = true;
+      Serial.println("");
+      Serial.print("Connected to ");
+      Serial.println(WiFi.SSID());
+      Serial.print("IP:");
+      Serial.print(WiFi.localIP());
+      Serial.print(", MAC:");
+      Serial.println(WiFi.macAddress());
+    }
 
-      LCD.print(data.pressure, 2);
-      LCD.print("mb");
+    int reconnectInterval = 60000; // 1min = 60s = 60,000ms
+    if (!online && (thisTick - lastTick > reconnectInterval)) {
+      connect_wifi();
+      lastTick = thisTick;
+    }
 
-      LCD.setCursor(0, 1);
-      if (openWindow(data.temperature, data.pressure)) {
-        LCD.print("Window Opened");
-      } else {
-        LCD.print("Window Closed");
+    Serial.print("provided altitude: ");
+    Serial.print(PERTH_ALTITUDE, 0);
+    Serial.println(" meters");
+    LCD.clear();
+
+    Data data;
+
+    // if startTemperature() successful, number of ms to wait is returned
+    // otherwise 0 is returned
+    char tempQueryReturn = sensor.startTemperature();
+    if (tempQueryReturn == 0) {
+      Serial.println("startTemperature failed and returned 0");
+      LCD.print("N/A C, ");
+    } else {
+      delay(tempQueryReturn);
+
+      // temperature measurement
+      tempQueryReturn = sensor.getTemperature(data.temperature);
+      if (tempQueryReturn != 0) {
+        double fahrenheit = (9.0 / 5.0) * data.temperature + 32.0;
+        Serial.print("temperature: ");
+        Serial.print(data.temperature, 2);
+        Serial.print(" deg C, ");
+        Serial.print(fahrenheit, 2);
+        Serial.println(" deg F");
+
+        LCD.print(data.temperature, 2);
+        LCD.print("C,");
       }
     }
-  }
 
-  if (online) {
-    Serial.println("wifi connected, sending data...");
-    if (writeIndex != 0) {
-      Serial.print("Dumping ");
-      Serial.print(writeIndex);
-      Serial.println(" items from reservoir");
-      while (writeIndex != 0) {
-        --writeIndex;
-        if (send_data(reservoir[writeIndex]) < 0) {
-          Serial.println("Dump failed, cancel dump, pushing data to reservoir");
-          ++writeIndex;
-          push_reservoir(data);
-          break;
+    char presQueryReturn = sensor.startPressure(3);
+    if (presQueryReturn == 0) {
+      printf("startPressure failed and returned 0");
+      LCD.print("N/A mb");
+    } else {
+      delay(presQueryReturn);
+
+      // this function requires temperature to calculate pressure
+      presQueryReturn = sensor.getPressure(data.pressure, data.temperature);
+      if (presQueryReturn == 0) {
+        Serial.println("getPressure failed and returned 0");
+      } else {
+        double inHg = data.pressure * 0.0295333727;
+        Serial.print("absolute pressure: ");
+        Serial.print(data.pressure, 2);
+        Serial.print(" mb, ");
+        Serial.print(inHg, 2);
+        Serial.println(" inHg");
+
+        LCD.print(data.pressure, 2);
+        LCD.print("mb");
+
+        LCD.setCursor(0, 1);
+        if (openWindow(data.temperature, data.pressure)) {
+          LCD.print("Window Opened");
+        } else {
+          LCD.print("Window Closed");
         }
       }
-      Serial.println("Reservoir dumped");
     }
-    if (send_data(data) < 0) {
-      Serial.println("Send data failed, pushing data to reservoir");
+
+    if (online) {
+      Serial.println("wifi connected, sending data...");
+      if (writeIndex != 0) {
+        Serial.print("Dumping ");
+        Serial.print(writeIndex);
+        Serial.println(" items from reservoir");
+        while (writeIndex != 0) {
+          --writeIndex;
+          if (send_data(reservoir[writeIndex]) < 0) {
+            Serial.println("Dump failed, cancel dump, pushing data to reservoir");
+            ++writeIndex;
+            push_reservoir(data);
+            break;
+          }
+        }
+        Serial.println("Reservoir dumped");
+      }
+      if (send_data(data) < 0) {
+        Serial.println("Send data failed, pushing data to reservoir");
+        push_reservoir(data);
+      }
+    } else {
+      Serial.println("wifi not connected, pushing data to reservoir");
       push_reservoir(data);
     }
-  } else {
-    Serial.println("wifi not connected, pushing data to reservoir");
-    push_reservoir(data);
+  } else if (online) {
+      WiFiClient client = server.available();
+      if (client) {
+        Serial.println("Client Connected");
+        while (client.connected()) {
+          if (client.available()) {
+            String request = client.readStringUntil('\r');
+            if (request.startsWith("SET_OVERRIDE_OFF")) {
+              override = OFF;
+              Serial.println("Override set to OFF");
+            } else if (request.startsWith("SET_OVERRIDE_OPEN")) {
+              override = ON_OPEN;
+              Serial.println("Override set to ON_OPEN");
+            } else if (request.startsWith("SET_OVERRIDE_CLOSE")) {
+              override = ON_CLOSE;
+              Serial.println("Override set to ON_CLOSE");
+            }
+          }
+        }
+
+        client.stop();
+        Serial.println("Client disconnected");
+      }
   }
-  delay(5000); //pause 5 seconds
 }

@@ -1,3 +1,5 @@
+#include <SDL2/SDL_events.h>
+#include <SDL2/SDL_keycode.h>
 #define SDL_DISABLE_IMMINTRIN_H
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -196,8 +198,10 @@ main(int argc, char* argv[]) {
     struct stat file_info;
     int dataCap = MEGA;
     int dataIndex = 0;
-    int visibleIndex = 0;
-    int targetVisibleIndex = 0;
+    int visibleIndexLow = 0;
+    int visibleIndexHigh = dataIndex;
+    int targetVisibleIndexLow = visibleIndexLow;
+    int targetVisibleIndexHigh = visibleIndexHigh;
     
     /* read data file */
     char* filename = "../data.txt";
@@ -226,6 +230,7 @@ main(int argc, char* argv[]) {
 		inData.seconds = 3600*hour + 60*minute + second;
 		data[dataIndex] = inData;
 		++dataIndex;
+		++targetVisibleIndexHigh;
 	    }
 	}
 
@@ -235,12 +240,18 @@ main(int argc, char* argv[]) {
 
     /* main loop */
     bool running = true;
-    int targetFPS = 60;
+    int targetFPS = 30;
     float64 frameTimeBudget = 1000.0/(float64)(targetFPS); // in ms
     clock_t lastTick = clock();
     float64 frameTime = 0;
     float delta = (float)frameTimeBudget/1000.0f;
     Uint32 sleepTime;
+    bool windowOpen = false;
+    bool forcing = false;
+
+    char *openCommand = "./command.sh 1";
+    char *closeCommand = "./command.sh 2";
+    char *releaseCommand = "./command.sh 0";
 
     const Color backgroundColor = RGB(54,51,95);
     const Color graphFrameColor = RGB(255,255,255);
@@ -252,6 +263,7 @@ main(int argc, char* argv[]) {
     const Color tempGraphBG = RGB(166,33,88);
     const Color pressGraphBG = RGB(77,90,54);
 
+    bool ctrl = false;
     while (running) {
 	/* event handling */
 	SDL_Event event;
@@ -261,19 +273,52 @@ main(int argc, char* argv[]) {
 	    case SDL_KEYDOWN: {
 		switch (event.key.keysym.sym) {
 		case SDLK_ESCAPE: { running = false; } break;
+		case SDLK_LCTRL: case SDLK_RCTRL: { ctrl = true; } break;
+		case SDLK_o: {
+		    windowOpen = true;
+		    forcing = true;
+		    int ret = system(openCommand);
+		    printf("open command sent\n");
+		} break;
+		    
+		case SDLK_c: {
+		    windowOpen = false;
+		    forcing = false;
+		    int ret = system(closeCommand);
+		    printf("close command sent\n");
+		} break;
+		}
+
+		case SDLK_r: {
+		    forcing = false;
+		} break;
+	    } break;
+	    case SDL_KEYUP: {
+		switch (event.key.keysym.sym) {
+		case SDLK_LCTRL: case SDLK_RCTRL: {ctrl = false; } break;
 		}
 	    } break;
 	    case SDL_MOUSEWHEEL: {
-		int step = dataIndex / 20;
-		targetVisibleIndex -= event.wheel.y * step ;
-		targetVisibleIndex = max(0, min((dataIndex - 100), targetVisibleIndex));
+		int step = (targetVisibleIndexHigh - targetVisibleIndexLow) / 20;
+		if (ctrl) {
+		    targetVisibleIndexHigh -= event.wheel.y * step;
+		    targetVisibleIndexHigh = max(targetVisibleIndexLow + 200, min(dataIndex, targetVisibleIndexHigh));
+		} else {
+		    targetVisibleIndexLow -= event.wheel.y * step ;
+		    targetVisibleIndexLow = max(0, min((targetVisibleIndexHigh - 200), targetVisibleIndexLow));
+		}
 	    } break;
 	    }
 	}
 
-	float catchUpSpeed = (float)(targetVisibleIndex - visibleIndex) / 50.0f;
-	visibleIndex += catchUpSpeed;
-	visibleIndex = max(0, min(dataIndex, visibleIndex));
+	float catchUpSpeedLow = (float)(targetVisibleIndexLow - visibleIndexLow) / 10.0f;
+	visibleIndexLow += catchUpSpeedLow;
+	visibleIndexLow = max(0, min(dataIndex, visibleIndexLow));
+	
+	float catchUpSpeedHigh = (float)(targetVisibleIndexHigh - visibleIndexHigh) / 10.0f;
+	visibleIndexHigh += catchUpSpeedHigh;
+	visibleIndexHigh = max(0, min(dataIndex, visibleIndexHigh));
+
 	/* check if file updated */
 	struct stat new_info;
 	if (stat(filename, &new_info) != 0) {
@@ -315,7 +360,7 @@ main(int argc, char* argv[]) {
 	double pressMin = 1000000;
 	double pressMax = 0;
 
-	for (int i = visibleIndex; i < dataIndex; ++i) {
+	for (int i = visibleIndexLow; i < visibleIndexHigh; ++i) {
 	    Data item = data[i];
 	    tempMin = min(tempMin, item.temperature);
 	    tempMax = max(tempMax, item.temperature);
@@ -325,7 +370,7 @@ main(int argc, char* argv[]) {
 	
 	/* draw stuff */
 	/* prepare some numbers */
-	int graphY = 100;
+	int graphY = 50;
 	int graphW = 400;
 	int graphH = 300;
 	int graphY2 = graphY + graphH;
@@ -343,6 +388,13 @@ main(int argc, char* argv[]) {
 	/* graph titles */
 	BlitChars(renderer, fontAtlas, "Temperature (Celsius)", 22, tempGraphX, graphY - CHAR_HEIGHT, CHAR_WIDTH);
 	BlitChars(renderer, fontAtlas, "Atomospheric Pressure (Millibar)", 33, pressGraphX, graphY - CHAR_HEIGHT, CHAR_WIDTH);
+
+	/* time range */
+	char timeRangeBuffer[51];
+	Data firstItem = data[targetVisibleIndexLow];
+	Data lastItem = data[targetVisibleIndexHigh - 1];
+	sprintf(timeRangeBuffer, "[%s %s] to [%s %s]", firstItem.date, firstItem.time, lastItem.date, lastItem.time);
+	BlitChars(renderer, fontAtlas, timeRangeBuffer, 50, tempGraphX + 10*CHAR_WIDTH, graphY2 + CHAR_HEIGHT/2, CHAR_WIDTH);
 	
 	/* graph background */
 	SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -419,13 +471,15 @@ main(int argc, char* argv[]) {
 	/* Temperature */
 	bool drewMin = false;
 	bool drewMax = false;
+	double tempSum = 0;
 	static float shift = 0;
 	shift += delta * 3;
 	SDL_SetRenderDrawColorRGB(renderer, tempDataColor);
-	bool drawRect = dataIndex - visibleIndex < 1000;
-	for (int i = visibleIndex; i < dataIndex; ++i) {
+	bool drawRect = visibleIndexHigh - visibleIndexLow < 1000;
+	for (int i = visibleIndexLow; i < visibleIndexHigh; ++i) {
 	    Data item = data[i];
-	    int x = ((int)LinearMap(i, visibleIndex, dataIndex, tempGraphX, tempGraphX2));
+	    tempSum += item.temperature;
+	    int x = ((int)LinearMap(i, visibleIndexLow, visibleIndexHigh, tempGraphX, tempGraphX2));
 	    int y = ((int)LinearMap(item.temperature, tempDisplayRangeLow, tempDisplayRangeHigh, graphY2, graphY));
 	    if (drawRect) {
 		SDL_Rect rect;
@@ -449,14 +503,31 @@ main(int argc, char* argv[]) {
 	    if (item.temperature == tempMin) drewMin = true;
 	    if (item.temperature == tempMax) drewMax = true;
 	}
+	double tempAverage = tempSum / (visibleIndexHigh - visibleIndexLow);
+	char* emptyTextBuffer = "                                                  ";
+	char textBuffer[51];
+	sprintf(textBuffer, "%s", emptyTextBuffer);
+	sprintf(textBuffer, "Average: %.2f", tempAverage);
+	BlitChars(renderer, fontAtlas, textBuffer, 50, tempGraphX, graphY2 + 2 * CHAR_HEIGHT, CHAR_WIDTH);
+	double stdSum = 0;
+	for (int i = visibleIndexLow; i < visibleIndexHigh; ++i) {
+	    double diff = data[i].temperature - tempAverage;
+	    stdSum += diff * diff;
+	}
+	double tempStd = sqrt(stdSum / (visibleIndexHigh - visibleIndexLow));
+	sprintf(textBuffer, "%s", emptyTextBuffer);
+	sprintf(textBuffer, "St Deviation: %.2f", tempStd); 
+	BlitChars(renderer, fontAtlas, textBuffer, 50, tempGraphX, graphY2 + 3 * CHAR_HEIGHT, CHAR_WIDTH);
 	
 	/* Pressure */
 	drewMin = false;
 	drewMax = false;
+	double pressSum = 0;
 	SDL_SetRenderDrawColorRGB(renderer, pressLineColor);
-	for (int i = visibleIndex; i < dataIndex; ++i) {
+	for (int i = visibleIndexLow; i < visibleIndexHigh; ++i) {
 	    Data item = data[i];
-	    int x = ((int)LinearMap(i, visibleIndex, dataIndex, pressGraphX, pressGraphX2));
+	    pressSum += item.pressure;
+	    int x = ((int)LinearMap(i, visibleIndexLow, visibleIndexHigh, pressGraphX, pressGraphX2));
 	    int y = ((int)LinearMap(item.pressure, pressDisplayRangeLow, pressDisplayRangeHigh, graphY2, graphY));
 	    if (drawRect) {
 		SDL_Rect rect;
@@ -481,6 +552,20 @@ main(int argc, char* argv[]) {
 	    if (item.pressure == pressMin) drewMin = true;
 	    if (item.pressure == pressMax) drewMax = true;
 	}
+	
+	double pressAverage = pressSum / (visibleIndexHigh - visibleIndexLow);
+	sprintf(textBuffer, "%s", emptyTextBuffer);
+	sprintf(textBuffer, "Average: %.2f", pressAverage);
+	BlitChars(renderer, fontAtlas, textBuffer, 50, pressGraphX, graphY2+ 2 * CHAR_HEIGHT, CHAR_WIDTH);
+	double pressStdSum = 0;
+	for (int i = visibleIndexLow; i < visibleIndexHigh; ++i) {
+	    double diff = data[i].pressure - pressAverage;
+	    pressStdSum += diff * diff;
+	}
+	double pressStd = sqrt(pressStdSum / (visibleIndexHigh - visibleIndexLow));
+	sprintf(textBuffer, "%s", emptyTextBuffer);
+	sprintf(textBuffer, "St Deviation: %.2f", pressStd); 
+	BlitChars(renderer, fontAtlas, textBuffer, 50, pressGraphX, graphY2 + 3 * CHAR_HEIGHT, CHAR_WIDTH);
 
 
 	/* frame */
@@ -488,6 +573,34 @@ main(int argc, char* argv[]) {
 	SDL_RenderDrawRect(renderer, &tempRect);
 	SDL_SetRenderDrawColorRGB(renderer,graphFrameColor);
 	SDL_RenderDrawRect(renderer, &pressRect);
+
+	/* window state */
+	tempSum = 0;
+	pressAverage = 0;
+	int low = max(0, dataIndex - 10000);
+	int high = dataIndex;
+	int diff = high - low;
+	for (int i = low; i < high; ++i) {
+	    tempSum += data[i].temperature;
+	    pressAverage += data[i].pressure;
+	}
+	tempAverage = tempSum/diff;
+	pressAverage = pressSum/diff;
+	Data current = data[dataIndex - 1];
+	windowOpen = ((current.pressure < 1000 ||
+	     current.pressure - pressAverage < 10) &&
+		      current.temperature - tempAverage < 0.5);
+	if (windowOpen) {
+	    BlitChars(renderer, fontAtlas, "Window is   Open.",17, tempGraphX, SCREEN_HEIGHT - 2 * CHAR_HEIGHT, CHAR_WIDTH);
+	} else {
+	    BlitChars(renderer, fontAtlas, "Window is   Open.",17, tempGraphX, SCREEN_HEIGHT - 2 * CHAR_HEIGHT, CHAR_WIDTH);
+	}
+
+	if (forcing) {
+	    BlitChars(renderer, fontAtlas, "[forcing]", 9, tempGraphX + 17*CHAR_WIDTH, SCREEN_HEIGHT - 2 * CHAR_HEIGHT, CHAR_WIDTH);
+	}
+
+	BlitChars(renderer, fontAtlas, "[o/c] to force open/close. [r] to cancel force.", 47, tempGraphX, SCREEN_HEIGHT - CHAR_HEIGHT, CHAR_WIDTH);
         SDL_RenderPresent(renderer);
 
 	/* Timing and sleeping */
